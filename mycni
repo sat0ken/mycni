@@ -1,0 +1,79 @@
+#!/bin/bash
+
+bridgeIP=$(ip -4 addr show br0 | grep inet | awk '{print $2}')
+cnt=$(ip link show | grep veth | wc -l)
+
+if [ $cnt -eq 0 ] ; then
+	ipaddr=2
+else
+	ipaddr=$(expr 2 + $cnt)
+fi
+
+podIP=$(echo $bridgeIP | sed -e "s|1/24|$ipaddr/24|")
+routeIP=$(echo $bridgeIP | sed -e "s|/24||")
+
+if [ "$CNI_COMMAND" = "VERSION" ]; then
+	echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
+elif [ "$CNI_COMMAND" = "DEL" ]; then
+	rm -f /var/run/netns/$CNI_CONTAINERID
+elif [ "$CNI_COMMAND" = "ADD" ]; then
+
+	PID=$(docker inspect -f "{{.State.Pid}}" $CNI_CONTAINERID)
+	NETNS=/proc/${PID}/ns/net
+
+	ln -sfT $NETNS /var/run/netns/$CNI_CONTAINERID
+	
+	cutid=$(echo $CNI_CONTAINERID | cut -c 1-4)
+	veth_host="veth_host_${cutid}"
+	veth_cont="veth_cont_${cutid}"
+
+	ip link add $veth_host type veth peer name $veth_cont
+	ip link set $veth_host master br0
+	ip link set $veth_host up
+
+	ip link set $veth_cont netns $CNI_CONTAINERID
+	ip netns exec $CNI_CONTAINERID ip link set dev $veth_cont name $CNI_IFNAME
+	ip netns exec $CNI_CONTAINERID ip addr add $podIP dev $CNI_IFNAME
+	ip netns exec $CNI_CONTAINERID ip link set dev $CNI_IFNAME up
+	ip netns exec $CNI_CONTAINERID ip route add default via $routeIP
+	
+	br0_mac=$(ip link show br0 | grep link | awk '{print $2}')
+	veth_host_mac=$(ip link show $veth_host | grep link | awk '{print $2}')
+	veth_cont_mac=$(ip netns exec $CNI_CONTAINERID ip link show $CNI_IFNAME | grep link | awk '{print $2}')
+
+	response=`cat << EOF
+{
+    "cniVersion": "0.3.1",
+    "interfaces": [
+        {
+            "name": "br0",
+            "mac": "$br0_mac"
+        },
+        {
+            "name": "$veth_host",
+            "mac": "$veth_host_mac"
+        },
+        {
+            "name": "$CNI_IFNAME",
+            "mac": "$veth_cont_mac",
+            "sandbox": "$NETNS"
+        }
+    ],
+    "ips": [
+        {
+            "version": "4",
+            "interface": 2,
+            "address": "$podIP",
+            "gateway": "$routeIP"
+        }
+    ],
+    "routes": [
+        {
+            "dst": "0.0.0.0/0"
+        }
+    ],
+    "dns": {}
+}
+EOF`
+	echo $response | sed -e "s/ //g"
+fi
