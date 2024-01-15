@@ -59,7 +59,7 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     "ips": [
         {
             "interface": "$veth_host_index",
-            "address": "$podIP",
+            "address": "$podIPpodIPAddr",
             "gateway": "$routeIP"
         }
     ],
