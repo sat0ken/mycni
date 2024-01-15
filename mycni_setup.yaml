@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-scripts
+  namespace: kube-system
+data:
+  setup.sh: |
+    #!/bin/bash
+    apt update
+    apt install -y curl iproute2 jq
+    curl -LO "https://dl.k8s.io/release/$(curl -LS https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x ./kubectl
+    nodes=($(./kubectl get node -o json | jq .items | jq --arg arg $(hostname) -r '.[] | select(.metadata.name != $arg) .metadata.name'))
+    for node in "${nodes[@]}"
+    do
+      node_ip=$(./kubectl get node "${node}" -o jsonpath='{.status.addresses}' | jq -r '.[] | select(.type == "InternalIP") .address')
+      pod_cidr=$(./kubectl get node "${node}" -o jsonpath='{.spec.podCIDR}')
+      printf "ip route add %s via %s dev eth0\n" $pod_cidr $node_ip
+      ip route add $pod_cidr via $node_ip dev eth0
+    done
+    curl -LO https://raw.githubusercontent.com/sat0ken/mycni/master/mycni.conf && mv ./mycni.conf /etc/cni/net.d
+    curl -LO https://raw.githubusercontent.com/sat0ken/mycni/master/mycni && chmod +x ./mycni && mv ./mycni /opt/cni/bin
+    echo "mycni init successfully..."
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mycni
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: mycni
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: mycni
+    spec:
+      initContainers:
+        - image: ubuntu:22.04
+          name: init
+          args:
+            - sleep
+            - infinity
+          # command: ["/bin/bash", "/work/setup.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: config-volume
+              mountPath: /work
+            - mountPath: /etc/cni/net.d
+              name: cni-cfg
+            - mountPath: /opt/cni/bin
+              name: cni-bin
+      containers:
+        - image: registry.k8s.io/pause:3.7
+          name: dummy
+      hostNetwork: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      schedulerName: default-scheduler
+      serviceAccount: kube-proxy
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config-volume
+          configMap:
+            name: init-scripts
+            items:
+              - key: setup.sh
+                path: setup.sh
+        - hostPath:
+            path: /etc/cni/net.d
+            type: ""
+          name: cni-cfg
+        - hostPath:
+            path: /opt/cni/bin
+            type: ""
+          name: cni-bin

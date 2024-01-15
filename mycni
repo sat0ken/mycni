@@ -1,10 +1,10 @@
 #!/bin/bash
 
 if [ "$CNI_COMMAND" = "VERSION" ]; then
-	echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
+    echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
 elif [ "$CNI_COMMAND" = "DEL" ]; then
     netns_name=$(echo $CNI_NETNS | cut -d"/" -f5)
-	ip netns del $netns_name
+    ip netns del $netns_name
 elif [ "$CNI_COMMAND" = "ADD" ]; then
 
     podCidrIP=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node $(hostname) -o json | jq -r .spec.podCIDR)
@@ -23,26 +23,26 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
 
     netns_name=$(echo $CNI_NETNS | cut -d"/" -f5)
 
-	cutid=$(echo $CNI_CONTAINERID | cut -c 1-4)
-	veth_host="veth_host_${cutid}"
-	veth_cont="veth_cont_${cutid}"
+    cutid=$(echo $CNI_CONTAINERID | cut -c 1-4)
+    veth_host="veth_host_${cutid}"
+    veth_cont="veth_cont_${cutid}"
 
-	ip link add $veth_host type veth peer name $veth_cont
-	ip addr add $routeIP_CIDR scope global dev $veth_host
+    ip link add $veth_host type veth peer name $veth_cont
+    ip addr add $routeIP_CIDR scope global dev $veth_host
     ip link set $veth_host up
     ip route add $podIPAddr scope global dev $veth_host
 
-	ip link set $veth_cont netns $netns_name
-	ip netns exec $netns_name ip link set dev $veth_cont name $CNI_IFNAME
-	ip netns exec $netns_name ip addr add $podIP_CIDR dev $CNI_IFNAME
-	ip netns exec $netns_name ip link set dev $CNI_IFNAME up
-	ip netns exec $netns_name ip route add default via $routeIP
-	
-	veth_host_mac=$(ip link show $veth_host | grep link | awk '{print $2}')
-	veth_cont_mac=$(ip netns exec $netns_name ip link show $CNI_IFNAME | grep link | awk '{print $2}')
+    ip link set $veth_cont netns $netns_name
+    ip netns exec $netns_name ip link set dev $veth_cont name $CNI_IFNAME
+    ip netns exec $netns_name ip addr add $podIP_CIDR dev $CNI_IFNAME
+    ip netns exec $netns_name ip link set dev $CNI_IFNAME up
+    ip netns exec $netns_name ip route add default via $routeIP
+    
+    veth_host_mac=$(ip link show $veth_host | grep link | awk '{print $2}')
+    veth_cont_mac=$(ip netns exec $netns_name ip link show $CNI_IFNAME | grep link | awk '{print $2}')
     veth_host_index=$(ip link show $veth_host | head -n 1 | cut -d":" -f1)
 
-	response=`cat << EOF
+    response=`cat << EOF
 {
     "cniVersion": "0.3.1",
     "interfaces": [
@@ -71,5 +71,5 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     "dns": {}
 }
 EOF`
-	echo $response | sed -e "s/ //g"
+    echo $response | sed -e "s/ //g"
 fi
