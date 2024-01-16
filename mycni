@@ -4,6 +4,8 @@ if [ "$CNI_COMMAND" = "VERSION" ]; then
     echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
 elif [ "$CNI_COMMAND" = "DEL" ]; then
     netns_name=$(echo $CNI_NETNS | cut -d"/" -f5)
+    podIPAddr=$(ip netns exec ip addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    ip route | grep $podIPAddr | xargs ip route del DEL
     ip netns del $netns_name
 elif [ "$CNI_COMMAND" = "ADD" ]; then
 
@@ -58,7 +60,6 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     ],
     "ips": [
         {
-            "interface": "$veth_host_index",
             "address": "$podIP_CIDR",
             "gateway": "$routeIP"
         }
