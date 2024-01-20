@@ -7,20 +7,60 @@ data:
   setup.sh: |
     #!/bin/bash
     apt update
-    apt install -y curl iproute2 jq
+    apt install -y curl iproute2 jq bridge-utils iptables
     curl -LO "https://dl.k8s.io/release/$(curl -LS https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x ./kubectl
-    nodes=($(./kubectl get node -o json | jq .items | jq --arg arg $(hostname) -r '.[] | select(.metadata.name != $arg) .metadata.name'))
+    chmod +x ./kubectl && mv ./kubectl /usr/local/bin
+
+    # NodeのspecからCIDRを取得
+    podCIDR=$(kubectl get node $(hostname) -o jsonpath='{.spec.podCIDR}')
+    printf "%s podCIDR is %s\n" $(hostname) $podCIDR
+
+    # linux-bridgeにセットするIPを生成
+    bridge_ip=$(echo $podCIDR | sed -e "s|0/24|1/24|")
+
+    # linux-bridgeを作成してIPアドレスを設定
+    brctl addbr br0
+    ip link set br0 up
+    ip addr add $bridge_ip dev br0
+    printf "create br0, set ipaddr %s\n" $bridge_ip 
+
+    # 外に出れるようにiptablesを設定
+    cluster_cidr=$(echo $bridge_ip | sed -e "s/10.244.*/10.244.0.0\/16/")
+    iptables -A FORWARD -s $cluster_cidr -j ACCEPT
+    iptables -A FORWARD -d $cluster_cidr -j ACCEPT
+    iptables -t nat -A POSTROUTING -s $podCIDR ! -o br0 -j MASQUERADE
+
+    # 他のNodeのIPアドレスとPodCIDRを取得してip routeコマンドで静的ルートを設定
+    nodes=($(kubectl get node -o json | jq .items | jq --arg arg $(hostname) -r '.[] | select(.metadata.name != $arg) .metadata.name'))
     for node in "${nodes[@]}"
     do
-      node_ip=$(./kubectl get node "${node}" -o jsonpath='{.status.addresses}' | jq -r '.[] | select(.type == "InternalIP") .address')
-      pod_cidr=$(./kubectl get node "${node}" -o jsonpath='{.spec.podCIDR}')
+      node_ip=$(kubectl get node "${node}" -o jsonpath='{.status.addresses}' | jq -r '.[] | select(.type == "InternalIP") .address')
+      pod_cidr=$(kubectl get node "${node}" -o jsonpath='{.spec.podCIDR}')
       printf "ip route add %s via %s dev eth0\n" $pod_cidr $node_ip
       ip route add $pod_cidr via $node_ip dev eth0
     done
     curl -LO https://raw.githubusercontent.com/sat0ken/mycni/master/mycni.conf && mv ./mycni.conf /etc/cni/net.d
     curl -LO https://raw.githubusercontent.com/sat0ken/mycni/master/mycni && chmod +x ./mycni && mv ./mycni /opt/cni/bin
     echo "mycni init successfully..."
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cleanup-scripts
+  namespace: kube-system
+data:
+  cleanup.sh: |
+    #!/bin/bash
+    apt update
+    apt install -y bridge-utils iptables iproute2
+    ip link set br0 down
+    brctl delbr br0
+    rm -f /etc/cni/net.d/mycni.conf
+    rm -f /opt/cni/bin/mycni
+    ip link show | grep ": veth_host" | cut -d"@" -f1 | cut -d":" -f2 | xargs -I dev ip link del dev
+    iptables -t filter -nvL --line-numbers | grep 10.244 | grep -o "^[0-9]" | head -n 1 | xargs -I num iptables -t filter -D FORWARD num
+    iptables -t nat -nvL --line-numbers | grep br0 | grep -o "^[0-9]" | xargs -I num iptables -t nat -D POSTROUTING num
+    echo "mycni cleanup successfully..."
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -40,22 +80,33 @@ spec:
       initContainers:
         - image: ubuntu:22.04
           name: init
-          args:
-            - sleep
-            - infinity
-          # command: ["/bin/bash", "/work/setup.sh"]
+          command: ["/bin/bash", "/setup/setup.sh"]
           securityContext:
             privileged: true
           volumeMounts:
-            - name: config-volume
-              mountPath: /work
+            - mountPath: /setup
+              name: setup
+            - mountPath: /cleanup
+              name: cleanup
             - mountPath: /etc/cni/net.d
               name: cni-cfg
             - mountPath: /opt/cni/bin
               name: cni-bin
       containers:
-        - image: registry.k8s.io/pause:3.7
-          name: dummy
+        - image: ubuntu:22.04
+          name: pause
+          args:
+            - sleep
+            - infinity
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /cleanup
+              name: cleanup
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/bash", "/cleanup/cleanup.sh"]
       hostNetwork: true
       nodeSelector:
         kubernetes.io/os: linux
@@ -64,12 +115,18 @@ spec:
       tolerations:
         - operator: Exists
       volumes:
-        - name: config-volume
+        - name: setup
           configMap:
             name: init-scripts
             items:
               - key: setup.sh
                 path: setup.sh
+        - name: cleanup
+          configMap:
+            name: cleanup-scripts
+            items:
+              - key: cleanup.sh
+                path: cleanup.sh
         - hostPath:
             path: /etc/cni/net.d
             type: ""

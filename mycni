@@ -25,11 +25,15 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     veth_host="veth_host_${cutid}"
     veth_cont="veth_cont_${cutid}"
 
+    # vethを作成する
     ip link add $veth_host type veth peer name $veth_cont
-	ip link set $veth_host master br0
+	# 作成したvethの片方をlinux-bridgeに接続
+    ip link set $veth_host master br0
 	ip link set $veth_host up
 
+    # 作成したvethの片方をpodのNetwork Namespaceに接続
     ip link set $veth_cont netns $netns_name
+    # ip netns execコマンドでIPアドレスとデフォルトルートを設定
     ip netns exec $netns_name ip link set dev $veth_cont name $CNI_IFNAME
     ip netns exec $netns_name ip addr add $podIP dev $CNI_IFNAME
     ip netns exec $netns_name ip link set dev $CNI_IFNAME up
@@ -39,6 +43,7 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     veth_cont_mac=$(ip netns exec $netns_name ip link show $CNI_IFNAME | grep link | awk '{print $2}')
     veth_host_index=$(ip link show $veth_host | head -n 1 | cut -d":" -f1)
 
+    # 作成結果を標準出力でkubeletに返す
     response=`cat << EOF
 {
     "cniVersion": "0.3.1",
