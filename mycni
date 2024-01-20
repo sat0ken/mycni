@@ -1,27 +1,23 @@
 #!/bin/bash
 
+bridgeIP=$(ip -4 addr show br0 | grep inet | awk '{print $2}')
+cnt=$(ip link show | grep veth | wc -l)
+
+if [ $cnt -eq 0 ] ; then
+	ipaddr=2
+else
+	ipaddr=$(expr 2 + $cnt)
+fi
+
+podIP=$(echo $bridgeIP | sed -e "s|1/24|$ipaddr/24|")
+routeIP=$(echo $bridgeIP | sed -e "s|/24||")
+
 if [ "$CNI_COMMAND" = "VERSION" ]; then
     echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
 elif [ "$CNI_COMMAND" = "DEL" ]; then
     netns_name=$(echo $CNI_NETNS | cut -d"/" -f5)
-    podIPAddr=$(ip netns exec ip addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    ip route | grep $podIPAddr | xargs ip route del DEL
     ip netns del $netns_name
 elif [ "$CNI_COMMAND" = "ADD" ]; then
-
-    podCidrIP=$(kubectl --kubeconfig /etc/kubernetes/kubelet.conf get node $(hostname) -o json | jq -r .spec.podCIDR)
-    cnt=$(ip link show | grep veth | wc -l)
-
-    if [ $cnt -eq 0 ] ; then
-        ipaddr=2
-    else
-        ipaddr=$(expr 2 + $cnt)
-    fi
-
-    podIPAddr=$(echo $podCidrIP | sed -e "s|0/24|$ipaddr|")
-    podIP_CIDR=$(echo $podCidrIP | sed -e "s|0/24|$ipaddr/24|")
-    routeIP=$(echo $podCidrIP | sed -e "s|0/24|1|")
-    routeIP_CIDR=$(echo $podCidrIP | sed -e "s|0/24|1/32|")
 
     netns_name=$(echo $CNI_NETNS | cut -d"/" -f5)
 
@@ -30,13 +26,12 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     veth_cont="veth_cont_${cutid}"
 
     ip link add $veth_host type veth peer name $veth_cont
-    ip addr add $routeIP_CIDR scope global dev $veth_host
-    ip link set $veth_host up
-    ip route add $podIPAddr scope global dev $veth_host
+	ip link set $veth_host master br0
+	ip link set $veth_host up
 
     ip link set $veth_cont netns $netns_name
     ip netns exec $netns_name ip link set dev $veth_cont name $CNI_IFNAME
-    ip netns exec $netns_name ip addr add $podIP_CIDR dev $CNI_IFNAME
+    ip netns exec $netns_name ip addr add $podIP dev $CNI_IFNAME
     ip netns exec $netns_name ip link set dev $CNI_IFNAME up
     ip netns exec $netns_name ip route add default via $routeIP
     
@@ -60,7 +55,7 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
     ],
     "ips": [
         {
-            "address": "$podIP_CIDR",
+            "address": "$podIP",
             "gateway": "$routeIP"
         }
     ],
