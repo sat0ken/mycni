@@ -27,9 +27,9 @@ elif [ "$CNI_COMMAND" = "ADD" ]; then
 
     # vethを作成する
     ip link add $veth_host type veth peer name $veth_cont
-	# 作成したvethの片方をlinux-bridgeに接続
+    # 作成したvethの片方をlinux-bridgeに接続
     ip link set $veth_host master br0
-	ip link set $veth_host up
+    ip link set $veth_host up
 
     # 作成したvethの片方をpodのNetwork Namespaceに接続
     ip link set $veth_cont netns $netns_name
