@@ -1,8 +1,30 @@
 #!/bin/bash
 
+# ipsetを作成しPodのIPを登録する
+set_ipset_rules() {
+	local ipset_name=$1
+	shift
+	local set_ip_list=($@)
+
+	stdout=$(sudo ipset list | grep $ipset_name)
+	if [ -z "$stdout" ]; then
+		printf "ipset create %s hash:ip\n" $ipset_name
+		for pod_ip in "${set_ip_list[@]}"
+		do
+			printf "ipset add %s %s\n" $ipset_name $pod_ip
+		done
+	else
+		# 更新処理をすべきだがあとで考える
+		:
+	fi
+}
+
 set_ingress_nw_policy_peer() {
 	spec=$1
 	nw_policy_peers=$2
+	name=$(echo "$item" | jq -r .metadata.name)
+	namespace=$(echo "$spec" | jq -r .metadata.namespace)
+
 	for peer in "${nw_policy_peers[@]}"
 	do
 		if [ $peer = "ipBlock" ]; then
@@ -10,7 +32,10 @@ set_ingress_nw_policy_peer() {
 		elif [ $peer = "namespaceSelector" ]; then
 			echo "namespaceSelector";
 		else
-			echo "podSelector!!!";
+			allow_pod_label=$(echo "$spec" | jq -c '.spec.ingress[].from[].podSelector.matchLabels' | sed -e "s/{//" -e "s/}//" -e "s/\"//g" -e "s/:/=/")
+			allow_pod_ips=($(kubectl -n $namespace get pod -l $allow_pod_label -o json | jq -r .items[].status.podIP))
+			allow_ipset_name=$(printf "%s-%s-from-podSelector" $namespace $name)
+			set_ipset_rules $allow_ipset_name "${allow_pod_ips[*]}"
 		fi
 	done
 }
@@ -30,6 +55,7 @@ set_ingress() {
 	done
 }
 
+# mainの処理
 kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c .items[] | while read -r item; do
     name=$(echo "$item" | jq -r .metadata.name)
 	namespace=$(echo "$item" | jq -r .metadata.namespace)
@@ -37,26 +63,14 @@ kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c .items[] | whil
 	pod_labels=$(echo "$item" | jq -c '.spec.podSelector.matchLabels' | sed -e "s/{//" -e "s/}//" -e "s/\"//g" -e "s/:/=/")
 	pod_ips=($(kubectl -n $namespace get pod -l $pod_labels -o json | jq -r .items[].status.podIP))
 
-	set_ingress $item
-
-	ipset_name=$(printf "%s-%s" $namespace $name)
-	# ipsetが存在していなければ作成する
-	stdout=$(sudo ipset list | grep $ipset_name)
-	if [ -z "$stdout" ]; then
-		printf "ipset create %s hash:ip\n" $ipset_name
-		for pod_ip in "${pod_ips[@]}"
-		do
-			printf "ipset add %s %s\n" $ipset_name $pod_ip
-		done
-	else
-		# 更新処理をすべきだがあとで考える
-		:
-	fi
+	# NWPolocyを設定するPodのipsetを作成する
+	ipset_name=$(printf "%s-%s-target" $namespace $name)
+	set_ipset_rules $ipset_name "${pod_ips[*]}"
 
 	for policy in "${policy_types[@]}"
 	do
 		if [ $policy = "Ingress" ]; then
-			:
+			set_ingress $item
 		else
 			:
 		fi
