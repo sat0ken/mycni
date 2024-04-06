@@ -22,13 +22,16 @@ data:
     brctl addbr br0
     ip link set br0 up
     ip addr add $bridge_ip dev br0
-    printf "create br0, set ipaddr %s\n" $bridge_ip 
+    printf "create br0, set ipaddr %s\n" $bridge_ip
 
     # 外に出れるようにiptablesを設定
     cluster_cidr=$(echo $bridge_ip | sed -e "s/10.244.*/10.244.0.0\/16/")
     iptables -A FORWARD -s $cluster_cidr -j ACCEPT
     iptables -A FORWARD -d $cluster_cidr -j ACCEPT
-    iptables -t nat -A POSTROUTING -s $podCIDR ! -o br0 -j MASQUERADE
+    iptables -t nat -N KIND-MASQ-AGENT
+    iptables -t nat -A POSTROUTING -m addrtype ! --dst-type LOCAL -j KIND-MASQ-AGENT
+    iptables -t nat -A KIND-MASQ-AGENT -d $cluster_cidr -j RETURN
+    iptables -t nat -A KIND-MASQ-AGENT -j MASQUERADE
 
     # 他のNodeのIPアドレスとPodCIDRを取得してip routeコマンドで静的ルートを設定
     nodes=($(kubectl get node -o json | jq .items | jq --arg arg $(hostname) -r '.[] | select(.metadata.name != $arg) .metadata.name'))
