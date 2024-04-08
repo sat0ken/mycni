@@ -6,6 +6,7 @@ set_ipset_rules() {
 	shift
 	local set_ip_list=($@)
 
+	# 存在しなければipsetのlistを新規作成
 	stdout=$(sudo ipset list | grep $ipset_name)
 	if [ -z "$stdout" ]; then
 		printf "ipset create %s hash:ip\n" $ipset_name >> cmd.txt
@@ -35,7 +36,6 @@ set_ingress_nw_policy_peer() {
 		else
 			allow_pod_label=$(echo "$spec" | jq -c '.spec.ingress[].from[].podSelector.matchLabels' | sed -e "s/{//" -e "s/}//" -e "s/\"//g" -e "s/:/=/")
 			allow_pod_ips=($(kubectl -n $namespace get pod -l $allow_pod_label -o json | jq -r .items[].status.podIP))
-			allow_ipset_name+="-from-podSelector"
 			set_ipset_rules $allow_ipset_name "${allow_pod_ips[*]}"
 		fi
 	done
@@ -84,8 +84,8 @@ kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c .items[] | whil
 	do
 		if [ $policy = "Ingress" ]; then
 			allow_ipset_name=$(set_ingress $item)
-			printf "iptables -A INPUT --ipv4 -m set --set %s src -m set --set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> cmd.txt
-			printf "iptables -A INPUT -m set ! --set %s src -m set --set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> cmd.txt
+			printf "iptables -A KUBE-PROXY-FIREWALL --ipv4 -m set --match-set %s src -m set --match-set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> cmd.txt
+			printf "iptables -A KUBE-PROXY-FIREWALL -m set ! --match-set %s src -m set --match-set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> cmd.txt
 		else
 			:
 		fi
