@@ -65,7 +65,12 @@ data:
     iptables -t nat -nvL --line-numbers | grep br0 | grep -o "^[0-9]" | xargs -I num iptables -t nat -D POSTROUTING num
     echo "mycni cleanup successfully..."
 ---
-apiVersion: v1data:
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: kube-system
+  name: cleanup-netpol
+data:
   netpol-clean.sh: |
     #!/bin/bash
 
@@ -94,12 +99,13 @@ apiVersion: v1data:
         done
       fi
     fi
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   namespace: kube-system
-  name: clean-netpol
----
-apiVersion: v1data:
+  name: create-netpol
+data:
   netpol.sh: |
     #!/bin/bash
 
@@ -198,10 +204,6 @@ apiVersion: v1data:
       # ipsetとiptablesを設定
       bash cmd.sh
     done
-kind: ConfigMap
-metadata:
-  namespace: kube-system
-  name: create-netpol
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -244,10 +246,10 @@ spec:
           volumeMounts:
             - mountPath: /cleanup
               name: cleanup
-            - mountPath: /netpol
+            - mountPath: /netpol/create
               name: create-netpol
-            - mountPath: /netpol
-              name: clean-netpol
+            - mountPath: /netpol/clean
+              name: cleanup-netpol
           lifecycle:
             preStop:
               exec:
@@ -256,7 +258,7 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       schedulerName: default-scheduler
-      serviceAccount: kube-proxy
+      serviceAccount: namespace-controller
       tolerations:
         - operator: Exists
       volumes:
@@ -280,7 +282,7 @@ spec:
                 path: netpol.sh
         - name: cleanup-netpol
           configMap:
-            name: clean-netpol
+            name: cleanup-netpol
             items:
               - key: netpol-clean.sh
                 path: netpol-clean.sh
