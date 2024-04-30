@@ -9,10 +9,10 @@ set_ipset_rules() {
   # 存在しなければipsetのlistを新規作成
   stdout=$(ipset list | grep $ipset_name)
   if [ -z "$stdout" ]; then
-    printf "ipset create %s %s\n" $ipset_name $ipset_type >> cmd.sh
+    printf "ipset create %s %s\n" $ipset_name $ipset_type >> /tmp/cmd.sh
     for pod_ip in "${set_ip_list[@]}"
     do
-        printf "ipset add %s %s\n" $ipset_name $pod_ip >> cmd.sh
+        printf "ipset add %s %s\n" $ipset_name $pod_ip >> /tmp/cmd.sh
     done
   else
     # 既にルールがあったら更新処理をすべきだが対応していない
@@ -62,7 +62,7 @@ set_ingress() {
   echo $allow_ipset_name
 }
 
-FILE=cmd.sh
+FILE=/tmp/cmd.sh
 if [ -f "$FILE" ]; then
   rm $FILE
 fi
@@ -85,13 +85,13 @@ kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c .items[] | whil
     # Ingressのみ対応している
     if [ $policy = "Ingress" ]; then
       allow_ipset_name=$(set_ingress $item)
-      printf "iptables -A KUBE-PROXY-FIREWALL --ipv4 -m set --match-set %s src -m set --match-set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> cmd.sh
-      printf "iptables -A KUBE-PROXY-FIREWALL --ipv4 -m set ! --match-set %s src -m set --match-set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> cmd.sh
+      printf "iptables -A mycni_firewall --ipv4 -m set --match-set %s src -m set --match-set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
+      printf "iptables -A mycni_firewall --ipv4 -m set ! --match-set %s src -m set --match-set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
     else
         :
     fi
   done
 
   # ipsetとiptablesを設定
-  bash cmd.sh
+  bash /tmp/cmd.sh
 done

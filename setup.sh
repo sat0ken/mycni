@@ -1,7 +1,7 @@
 #!/bin/bash
 apt update
-apt install -y curl iproute2 jq bridge-utils iptables
-curl -LO "https://dl.k8s.io/release/$(curl -LS https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+apt install -y curl iproute2 jq bridge-utils iptables >> /dev/null
+curl -s -LO "https://dl.k8s.io/release/$(curl -s -LS https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x ./kubectl && mv ./kubectl /usr/local/bin
 
 # NodeのspecからCIDRを取得
@@ -19,6 +19,10 @@ printf "create br0, set ipaddr %s\n" $bridge_ip
 
 # 外に出れるようにiptablesを設定
 cluster_cidr=$(echo $bridge_ip | sed -e "s/10.244.*/10.244.0.0\/16/")
+iptables -N mycni_firewall
+iptables -A FORWARD -p all -j mycni_firewall
+iptables -A INPUT -p all -j mycni_firewall
+iptables -A OUTPUT -p all -j mycni_firewall
 iptables -A FORWARD -s $cluster_cidr -j ACCEPT
 iptables -A FORWARD -d $cluster_cidr -j ACCEPT
 iptables -t nat -N KIND-MASQ-AGENT
