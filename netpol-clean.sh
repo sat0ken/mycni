@@ -5,13 +5,13 @@ netpol_items=($(kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c
 length=${#netpol_items[@]}
 
 # filterのルール数を取得
-rules=$(iptables -t filter -L KUBE-PROXY-FIREWALL | grep -v Chain | grep -v target | wc -l)
+rules=$(iptables -t filter -L mycni_firewall | grep -v Chain | grep -v target | wc -l)
 
 # # NWポリシーが設定されていない状態でipsetとiptablesのルールが残っている場合は消去する
 if [[ "$length" -eq 0 ]]; then
   # 不要なルールを削除(他のルールも消しそうで危険)
   if [[ "$rules" -eq 0 ]]; then
-    iptables -t filter -F KUBE-PROXY-FIREWALL
+    iptables -t filter -F mycni_firewall
   fi
 
   # IPセットのリストを取得
