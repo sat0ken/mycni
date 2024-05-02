@@ -12,11 +12,11 @@ set_ipset_rules() {
     printf "ipset create %s %s\n" $ipset_name $ipset_type >> /tmp/cmd.sh
     for pod_ip in "${set_ip_list[@]}"
     do
-        printf "ipset add %s %s\n" $ipset_name $pod_ip >> /tmp/cmd.sh
+      printf "ipset add %s %s\n" $ipset_name $pod_ip >> /tmp/cmd.sh
     done
   else
     # 既にルールがあったら更新処理をすべきだが対応していない
-    printf "already exist ipset %s\n" $ipset_name
+    :
   fi
 }
 
@@ -30,15 +30,15 @@ set_ingress_nw_policy_peer() {
   for peer in "${nw_policy_peers[@]}"
   do
     if [ $peer = "ipBlock" ]; then
-        # ipBlockに対応していない
-        :
+      # ipBlockに対応していない
+      :
     elif [ $peer = "namespaceSelector" ]; then
-        # namespaceSelectorに対応していない
-        :
+      # namespaceSelectorに対応していない
+      :
     else
-        allow_pod_label=$(echo "$spec" | jq -c '.spec.ingress[].from[].podSelector.matchLabels' | sed -e "s/{//" -e "s/}//" -e "s/\"//g" -e "s/:/=/")
-        allow_pod_ips=($(kubectl -n $namespace get pod -l $allow_pod_label -o json | jq -r .items[].status.podIP))
-        set_ipset_rules "${allow_pod_ips[*]}" $allow_ipset_name "hash:ip"
+      allow_pod_label=$(echo "$spec" | jq -c '.spec.ingress[].from[].podSelector.matchLabels' | sed -e "s/{//" -e "s/}//" -e "s/\"//g" -e "s/:/=/")
+      allow_pod_ips=($(kubectl -n $namespace get pod -l $allow_pod_label -o json | jq -r .items[].status.podIP))
+      set_ipset_rules "${allow_pod_ips[*]}" $allow_ipset_name "hash:ip"
     fi
   done
 
@@ -85,13 +85,14 @@ kubectl get networkpolicies.networking.k8s.io -A -o json | jq -c .items[] | whil
     # Ingressのみ対応している
     if [ $policy = "Ingress" ]; then
       allow_ipset_name=$(set_ingress $item)
-      printf "iptables -A mycni_firewall --ipv4 -m set --match-set %s src -m set --match-set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
-      printf "iptables -A mycni_firewall --ipv4 -m set ! --match-set %s src -m set --match-set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
+      stdout=$(iptables -t filter -nL | grep $allow_ipset_name)
+      if [ -z "$stdout" ]; then
+        printf "iptables -A mycni_firewall --ipv4 -m set --match-set %s src -m set --match-set %s dst -j ACCEPT\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
+        printf "iptables -A mycni_firewall --ipv4 -m set ! --match-set %s src -m set --match-set %s dst -j DROP\n" $allow_ipset_name $target_ipset_name >> /tmp/cmd.sh
+        /bin/bash /tmp/cmd.sh
+      fi
     else
-        :
+      :
     fi
   done
-
-  # ipsetとiptablesを設定
-  bash /tmp/cmd.sh
 done

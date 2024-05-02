@@ -13,7 +13,7 @@ if [[ "$length" -eq 0 ]]; then
   if [[ "$rules" -eq 0 ]]; then
     iptables -t filter -F mycni_firewall
   fi
-
+  sleep 1
   # IPセットのリストを取得
   ipset_list=$(ipset list -n)
   # IPセットが存在するかどうかを確認
